@@ -1,0 +1,18 @@
+#!/usr/bin/env node
+// pre-commit hook — runs before every commit.
+// Exit with non-zero to abort the commit.
+// To use a shell script, rename this or start with #!/bin/sh
+
+// Example: reject commits with TODO in staged files
+/*
+const { execSync } = require("child_process");
+try {
+  const output = execSync("node bin/logit.js status").toString();
+  if (output.includes("TODO")) {
+    console.error("Error: Fix TODOs first!");
+    process.exit(1);
+  }
+} catch (e) {}
+*/
+
+process.exit(0);

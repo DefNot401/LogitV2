@@ -1,0 +1,28 @@
+{
+  "name": "logit",
+  "version": "1.0.0",
+  "description": "A lightweight distributed version control system with local network repository sharing",
+  "type": "module",
+  "main": "bin/logit.js",
+  "bin": {
+    "logit": "./bin/logit.js"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "start": "node bin/logit.js"
+  },
+  "keywords": [
+    "vcs",
+    "version-control",
+    "git",
+    "distributed"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "commander": "^12.1.0",
+    "diff": "^8.0.3",
+    "express": "^4.21.0",
+    "multicast-dns": "^7.2.5"
+  }
+}

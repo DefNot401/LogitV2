@@ -1,0 +1,15 @@
+#!/usr/bin/env node
+// pre-push hook — runs before pushing to a remote.
+// Exit with non-zero to abort the push.
+
+// Example: run tests before pushing
+/*
+const { execSync } = require("child_process");
+try {
+  execSync("npm test", { stdio: "inherit" });
+} catch (e) {
+  process.exit(1);
+}
+*/
+
+process.exit(0);
