@@ -14,14 +14,11 @@ export function registerClone(program) {
     .description('Clone a repository from a remote server')
     .argument('<url>', 'Server URL (e.g., http://192.168.1.10:5000)')
     .argument('[directory]', 'Directory to clone into')
-    .option('--token <token>', 'Auth token for private repositories')
-    .action(async (url, directory, options) => {
+    .action(async (url, directory) => {
       try {
         const serverUrl = url.endsWith('/') ? url.slice(0, -1) : url;
 
         const headers = {};
-        const token = options.token || process.env.LOGIT_TOKEN;
-        if (token) headers['Authorization'] = `Bearer ${token}`;
 
         info(`Cloning from ${serverUrl}...`);
 
@@ -91,9 +88,8 @@ export function registerClone(program) {
           }
         }
 
-        // Save remote config (with token if provided)
-        const remoteEntry = token ? { url: serverUrl, token } : serverUrl;
-        const remotes = { origin: remoteEntry };
+        // Save remote config
+        const remotes = { origin: serverUrl };
         await fs.writeFile(path.join(logitDir, 'remotes'), JSON.stringify(remotes, null, 2));
 
         success(`Cloned repository into '${targetDir}'`);

@@ -14,7 +14,6 @@ export function registerPull(program) {
     .command('pull')
     .description('Pull updates from a remote server')
     .option('-r, --remote <name>', 'Remote name', 'origin')
-    .option('--token <token>', 'Auth token (overrides stored token)')
     .action(async (options) => {
       try {
         const logitDir = await getLogitDir();
@@ -31,11 +30,8 @@ export function registerPull(program) {
         }
 
         const serverUrl = typeof remoteEntry === 'string' ? remoteEntry : remoteEntry.url;
-        const token = options.token || (typeof remoteEntry === 'object' ? remoteEntry.token : null)
-          || process.env.LOGIT_TOKEN;
 
         const headers = {};
-        if (token) headers['Authorization'] = `Bearer ${token}`;
 
         info(`Pulling from ${serverUrl}...`);
 

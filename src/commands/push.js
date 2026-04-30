@@ -12,7 +12,6 @@ export function registerPush(program) {
     .command('push')
     .description('Push commits to a remote server')
     .option('-r, --remote <name>', 'Remote name', 'origin')
-    .option('--token <token>', 'Auth token (overrides stored token)')
     .action(async (options) => {
       try {
         const logitDir = await getLogitDir();
@@ -30,35 +29,12 @@ export function registerPush(program) {
           throw new Error(`Remote '${options.remote}' not found. Use 'logit remote add <name> <url>'.`);
         }
 
-        // Support both plain URL string and {url, token} object
+        // Support both plain URL string and { url } object
         const serverUrl = typeof remoteEntry === 'string' ? remoteEntry : remoteEntry.url;
-        const token = options.token || (typeof remoteEntry === 'object' ? remoteEntry.token : null)
-          || process.env.LOGIT_TOKEN;
 
-        // Build auth headers
         const headers = { 'Content-Type': 'application/json' };
-        if (token) headers['Authorization'] = `Bearer ${token}`;
 
         info(`Pushing to ${serverUrl}...`);
-
-        // Check auth requirements on server
-        try {
-          const authRes = await fetch(`${serverUrl}/auth-info`);
-          if (authRes.ok) {
-            const authInfo = await authRes.json();
-            if (authInfo.readOnly) {
-              throw new Error('Remote server is in read-only mode. Push rejected.');
-            }
-            if (authInfo.requiresAuth && !token) {
-              throw new Error(
-                'Remote server requires authentication. Use --token <tok> or logit remote set-token.'
-              );
-            }
-          }
-        } catch (e) {
-          if (e.message.includes('read-only') || e.message.includes('authentication')) throw e;
-          // If /auth-info not found, proceed (older server)
-        }
 
         // Get local and remote object lists
         const localObjects = await listAllObjects(logitDir);

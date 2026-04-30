@@ -105,10 +105,10 @@ Logit supports **fast-forward** merges and creates **merge commits** for non-lin
 
 ## LAN Collaboration
 
-Logit's standout feature is the ability to share repositories over your local network without needing a central server like GitHub.
+Logit's standout feature is the ability to share repositories over your local network without needing a central server like GitHub. There is **no authentication** — anyone on the same network can clone, pull, and push freely (click-and-join).
 
 ### 1. Sharing Your Repository
-To let others on your network see or clone your code:
+To let others on your network clone and contribute to your code:
 ```bash
 logit serve
 ```
@@ -116,14 +116,20 @@ By default, this starts a server on port **5000**. You can specify a different p
 ```bash
 logit serve --port 8080
 ```
-The command will display your local IP addresses (e.g., `http://192.168.1.15:5000`) for others to use.
+The command will display:
+- Your local IP addresses (e.g., `http://192.168.1.15:5000`) for others to use.
+- A link to the built-in **Web Explorer UI** at `http://localhost:5000`.
+- Ready-to-paste `logit clone` commands.
+
+> [!TIP]
+> The server runs in **open mode** — no tokens or passwords are needed. Anyone on the same WiFi or Ethernet can immediately clone, push, and pull.
 
 ### 2. Accessing a Shared Repository (Cloning)
-If a colleague is running `logit serve`, you can copy their entire project:
+If a colleague is running `logit serve`, simply run:
 ```bash
 logit clone http://192.168.1.15:5000 [my-project-folder]
 ```
-This initializes a local repository, fetches all objects, and checks out the current branch. It also automatically sets up a remote named `origin`.
+This initializes a local repository, fetches all objects, and checks out the current branch. It also automatically sets up a remote named `origin` pointing back to the host.
 
 ### 3. Managing Remotes
 View your configured remote servers:
@@ -134,8 +140,12 @@ Add a new remote manually:
 ```bash
 logit remote add colleague http://192.168.1.20:5000
 ```
+Remove a remote:
+```bash
+logit remote remove colleague
+```
 
-### 4. Syncing changes
+### 4. Syncing Changes
 **Pulling**: Get the latest updates from a remote branch:
 ```bash
 logit pull origin main
@@ -199,8 +209,8 @@ You can also use standard shell scripts (starting with `#!/bin/sh`).
 | `switch` | `<branch>` | Switch to a branch |
 | `merge` | `<branch>` | Merge branch into current |
 | `checkout` | `<ref>` | Restore files or switch HEAD |
-| `serve` | `[-p port]` | Start LAN sharing server |
+| `serve` | `[-p port]` | Start LAN sharing server (open, no auth) |
 | `clone` | `<url> [dir]` | Clone from a remote server |
 | `remote` | `add/list/remove` | Manage remotes |
-| `push` | `[remote] [branch]`| Send commits to remote |
-| `pull` | `[remote] [branch]`| Fetch and merge from remote |
+| `push` | `[-r remote]` | Send commits to remote |
+| `pull` | `[-r remote]` | Fetch and merge from remote |

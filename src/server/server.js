@@ -12,28 +12,7 @@ import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const Diff = require('diff');
 
-// ---------------------------------------------------------------------------
-// Auth middleware factory
-// ---------------------------------------------------------------------------
-function makeAuthMiddleware(token, readOnly) {
-  return function authMiddleware(req, res, next) {
-    const isWriteRoute = req.method === 'POST' || req.method === 'PUT' || req.method === 'DELETE';
 
-    if (readOnly && isWriteRoute) {
-      return res.status(403).json({ error: 'Server is in read-only mode. Writes are not allowed.' });
-    }
-
-    if (token && isWriteRoute) {
-      const authHeader = req.headers['authorization'] || '';
-      const provided = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
-      if (provided !== token) {
-        return res.status(401).json({ error: 'Unauthorized: invalid or missing token.' });
-      }
-    }
-
-    next();
-  };
-}
 
 // ---------------------------------------------------------------------------
 // Web Explorer UI (self-contained HTML/CSS/JS)
@@ -537,10 +516,8 @@ function buildWebUI(repoName) {
  * Create and return an Express server for sharing the repository over LAN.
  * @param {string} logitDir
  * @param {string} repoRoot
- * @param {{ token?: string, readOnly?: boolean }} opts
  */
-export function createServer(logitDir, repoRoot, opts = {}) {
-  const { token = null, readOnly = false } = opts;
+export function createServer(logitDir, repoRoot) {
   const app = express();
 
   // Raw body for packfile uploads (must come before json middleware)
@@ -556,9 +533,6 @@ export function createServer(logitDir, repoRoot, opts = {}) {
 
   app.use(express.json({ limit: '50mb' }));
 
-  // Auth middleware on all routes
-  app.use(makeAuthMiddleware(token, readOnly));
-
   // ── Web UI ──────────────────────────────────────────────────────────────
   app.get('/', (req, res) => {
     const repoName = path.basename(repoRoot);
@@ -566,10 +540,7 @@ export function createServer(logitDir, repoRoot, opts = {}) {
     res.send(buildWebUI(repoName));
   });
 
-  // ── Auth info (unauthenticated) ─────────────────────────────────────────
-  app.get('/auth-info', (req, res) => {
-    res.json({ requiresAuth: !!token, readOnly });
-  });
+
 
   // ── Repository info ──────────────────────────────────────────────────────
   app.get('/info', async (req, res) => {
