@@ -200,18 +200,31 @@ export function registerClone(program) {
           console.log('');
           info(`Fetching ${totalObjects} object(s)...`);
 
-          // Try packfile first (fast path)
-          const hashList = objectHashes.join(',');
-          const packRes  = await fetch(`${serverUrl}/packfile?hashes=${hashList}`);
+          const chunkSize = 100;
+          let storedCount = 0;
+          let useFallback = false;
 
-          if (packRes.ok && packRes.headers.get('content-type') === 'application/octet-stream') {
-            renderProgress(0, totalObjects, 'downloading packfile');
-            const packBuffer = Buffer.from(await packRes.arrayBuffer());
-            renderProgress(totalObjects, totalObjects, 'unpacking...');
-            const stored = await unpackPackfile(logitDir, packBuffer);
-            clearLine();
-            success(`Unpacked ${stored} object(s) from packfile.`);
-          } else {
+          for (let i = 0; i < totalObjects; i += chunkSize) {
+            const chunk = objectHashes.slice(i, i + chunkSize);
+            const hashList = chunk.join(',');
+            try {
+              renderProgress(i, totalObjects, 'downloading packfile');
+              const packRes = await fetch(`${serverUrl}/packfile?hashes=${hashList}`);
+              if (packRes.ok && packRes.headers.get('content-type') === 'application/octet-stream') {
+                const packBuffer = Buffer.from(await packRes.arrayBuffer());
+                const stored = await unpackPackfile(logitDir, packBuffer);
+                storedCount += stored;
+              } else {
+                useFallback = true;
+                break;
+              }
+            } catch (err) {
+              useFallback = true;
+              break;
+            }
+          }
+
+          if (useFallback) {
             // Fallback: object-by-object with progress bar
             let fetched = 0;
             for (const hash of objectHashes) {
@@ -228,6 +241,10 @@ export function registerClone(program) {
             }
             clearLine();
             info(`Fetched ${fetched} object(s).`);
+          } else {
+            renderProgress(totalObjects, totalObjects, 'unpacking...');
+            clearLine();
+            success(`Unpacked ${storedCount} object(s) from packfile.`);
           }
           console.log('');
         }
@@ -962,14 +979,30 @@ export function registerPull(program) {
         if (toFetch.length > 0) {
           info(`Fetching ${toFetch.length} object(s)...`);
 
-          const hashList = toFetch.join(',');
-          const packRes = await fetch(`${serverUrl}/packfile?hashes=${hashList}`);
+          const chunkSize = 100;
+          let storedCount = 0;
+          let useFallback = false;
 
-          if (packRes.ok && packRes.headers.get('content-type') === 'application/octet-stream') {
-            const packBuffer = Buffer.from(await packRes.arrayBuffer());
-            const stored = await unpackPackfile(logitDir, packBuffer);
-            info(`Unpacked ${stored} object(s) from packfile.`);
-          } else {
+          for (let i = 0; i < toFetch.length; i += chunkSize) {
+            const chunk = toFetch.slice(i, i + chunkSize);
+            const hashList = chunk.join(',');
+            try {
+              const packRes = await fetch(`${serverUrl}/packfile?hashes=${hashList}`);
+              if (packRes.ok && packRes.headers.get('content-type') === 'application/octet-stream') {
+                const packBuffer = Buffer.from(await packRes.arrayBuffer());
+                const stored = await unpackPackfile(logitDir, packBuffer);
+                storedCount += stored;
+              } else {
+                useFallback = true;
+                break;
+              }
+            } catch (err) {
+              useFallback = true;
+              break;
+            }
+          }
+
+          if (useFallback) {
             for (const hash of toFetch) {
               const objRes = await fetch(`${serverUrl}/objects/${hash}`);
               if (objRes.ok) {
@@ -980,6 +1013,8 @@ export function registerPull(program) {
                 await fs.writeFile(objPath, data);
               }
             }
+          } else if (storedCount > 0) {
+            info(`Unpacked ${storedCount} object(s) from packfile.`);
           }
         }
 
@@ -1814,14 +1849,31 @@ async function pullFromUrl(serverUrl, logitDir, repoRoot) {
 
   if (toFetch.length > 0) {
     info(`    Fetching ${toFetch.length} object(s)...`);
-    const hashList = toFetch.join(',');
-    const packRes = await fetch(`${serverUrl}/packfile?hashes=${hashList}`);
 
-    if (packRes.ok && packRes.headers.get('content-type') === 'application/octet-stream') {
-      const packBuffer = Buffer.from(await packRes.arrayBuffer());
-      const stored = await unpackPackfile(logitDir, packBuffer);
-      info(`    Unpacked ${stored} object(s).`);
-    } else {
+    const chunkSize = 100;
+    let storedCount = 0;
+    let useFallback = false;
+
+    for (let i = 0; i < toFetch.length; i += chunkSize) {
+      const chunk = toFetch.slice(i, i + chunkSize);
+      const hashList = chunk.join(',');
+      try {
+        const packRes = await fetch(`${serverUrl}/packfile?hashes=${hashList}`);
+        if (packRes.ok && packRes.headers.get('content-type') === 'application/octet-stream') {
+          const packBuffer = Buffer.from(await packRes.arrayBuffer());
+          const stored = await unpackPackfile(logitDir, packBuffer);
+          storedCount += stored;
+        } else {
+          useFallback = true;
+          break;
+        }
+      } catch (err) {
+        useFallback = true;
+        break;
+      }
+    }
+
+    if (useFallback) {
       for (const hash of toFetch) {
         const objRes = await fetch(`${serverUrl}/objects/${hash}`);
         if (objRes.ok) {
@@ -1832,6 +1884,8 @@ async function pullFromUrl(serverUrl, logitDir, repoRoot) {
           await fs.writeFile(objPath, data);
         }
       }
+    } else if (storedCount > 0) {
+      info(`    Unpacked ${storedCount} object(s).`);
     }
   }
 
