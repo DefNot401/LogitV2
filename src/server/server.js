@@ -3,7 +3,8 @@ import path from 'path';
 import fs from 'fs/promises';
 import { getLogitDir, getRepoRoot } from '../core/repository.js';
 import { readObject, objectExists, listAllObjects, writeObject } from '../core/objects.js';
-import { getAllRefs, getBranchCommit, resolveHead } from '../core/refs.js';
+import { getAllRefs, getBranchCommit, resolveHead, getCurrentBranch } from '../core/refs.js';
+import { checkout } from '../core/checkout.js';
 import { getCommitLog, readCommit } from '../core/commit.js';
 import { readTree } from '../core/tree.js';
 import { createPackfile, unpackPackfile } from '../core/packfile.js';
@@ -676,6 +677,29 @@ export function createServer(logitDir, repoRoot) {
         await fs.mkdir(path.dirname(refPath), { recursive: true });
         await fs.writeFile(refPath, hash + '\n');
       }
+
+      // Auto-checkout: restore working directory to the current branch's new HEAD
+      // This makes `logit serve` behave as a live (non-bare) repo — files on the
+      // host PC will reflect what was pushed without needing a manual checkout.
+      try {
+        const currentBranch = await getCurrentBranch(logitDir);
+        if (currentBranch) {
+          await checkout(logitDir, currentBranch);
+          console.log(`[logit serve] Auto-checked out branch '${currentBranch}' after push.`);
+        } else {
+          // Detached HEAD — checkout the new HEAD hash directly
+          const { resolveHead: rh } = await import('../core/refs.js');
+          const headHash = await resolveHead(logitDir);
+          if (headHash) {
+            await checkout(logitDir, headHash);
+            console.log(`[logit serve] Auto-checked out ${headHash.substring(0, 7)} after push.`);
+          }
+        }
+      } catch (checkoutErr) {
+        // Don't fail the push if checkout has a problem — just log it
+        console.warn(`[logit serve] Auto-checkout failed: ${checkoutErr.message}`);
+      }
+
       res.json({ message: 'Refs updated.' });
     } catch (err) {
       res.status(500).json({ error: err.message });
