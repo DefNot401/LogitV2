@@ -1,0 +1,42 @@
+LogitV2 - Distributed Version Control System (VCS)
+=================================================
+
+Project Overview:
+LogitV2 is a custom-built, distributed version control system designed for seamless local network (LAN) collaboration. It provides a lightweight yet powerful set of tools for tracking file changes, managing branches, and sharing repositories without complex configuration.
+
+Core Features:
+---------------
+1. VCS Fundamentals:
+   - File Staging: Add files to a staging area before committing.
+   - Committing: Create snapshots of the project with author info and timestamps.
+   - Branching & Tagging: Manage multiple development lines and mark significant milestones.
+   - Merge & Conflict Resolution: Combine branches with automatic three-way merging and conflict detection.
+   - Stashing: Temporarily save uncommitted work to a stack.
+   - Status & Diff: Visual tracking of changes in the working directory.
+
+2. Networking & Collaboration:
+   - Push/Pull/Clone: Standard distributed workflow for syncing repositories.
+   - Packfile Support: Binary object bundling for efficient network transmission.
+   - Zero-Config Discovery (mDNS): Automatically find and connect to Logit servers on the local network.
+   - Remote Management: Easily add and manage multiple server URLs.
+
+3. Built-in Web UI:
+   - A fully interactive Web Explorer accessible via any browser.
+   - Features: Commit graph, file tree navigation, commit diff viewer, and syntax highlighting.
+
+4. Extensibility:
+   - Hook System: Support for custom scripts (pre-commit, pre-push) to automate checks or tests.
+
+Technical Architecture:
+-----------------------
+- Object Storage: Content-addressable database using SHA-1 hashing and zlib compression.
+- Reference System: Branch pointers and HEAD management stored in .logit/refs.
+- Server: Express-based API for repository sharing and serving the Web UI.
+- Discovery: multicast-dns (mDNS) implementation for LAN advertisement.
+
+Technologies Used:
+------------------
+- Runtime: Node.js
+- CLI Framework: Commander.js
+- Networking: Express.js, multicast-dns
+- Utilities: Chalk (colors), Diff (patching), Zlib (compression)

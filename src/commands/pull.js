@@ -6,18 +6,55 @@ import { resolveHead, getCurrentBranch, updateHead } from '../core/refs.js';
 import { readCommit } from '../core/commit.js';
 import { readTree } from '../core/tree.js';
 import { unpackPackfile } from '../core/packfile.js';
+import { getStatus } from '../core/status.js';
 import { ensureDir } from '../utils/fs.js';
 import { success, info, error } from '../utils/display.js';
+import chalk from 'chalk';
+import readline from 'readline';
+
+function prompt(question) {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) => {
+    rl.question(question, (answer) => { rl.close(); resolve(answer.trim()); });
+  });
+}
 
 export function registerPull(program) {
   program
     .command('pull')
     .description('Pull updates from a remote server')
     .option('-r, --remote <name>', 'Remote name', 'origin')
+    .option('-f, --force', 'Overwrite local changes without prompting')
     .action(async (options) => {
       try {
         const logitDir = await getLogitDir();
         const repoRoot = await getRepoRoot();
+
+        // ── Dirty working directory check ─────────────────────────────────
+        if (!options.force) {
+          const status = await getStatus();
+          const isDirty = status.staged.length > 0 || status.modified.length > 0 || status.deleted.length > 0;
+
+          if (isDirty) {
+            console.log('');
+            console.log(chalk.yellow('  ⚠  Your working directory has uncommitted changes:'));
+            [...status.staged.map(f => `     ${chalk.green('staged:   ')} ${f}`),
+             ...status.modified.map(f => `     ${chalk.yellow('modified: ')} ${f}`),
+             ...status.deleted.map(f => `     ${chalk.red('deleted:  ')} ${f}`)
+            ].forEach(l => console.log(l));
+            console.log('');
+
+            const answer = await prompt(
+              chalk.bold('  Pulling will overwrite these files. Continue? (y/N) ')
+            );
+            if (answer.toLowerCase() !== 'y') {
+              info('Pull cancelled. Stash or commit your changes first:');
+              info('  logit stash   — to save changes temporarily');
+              info('  logit commit  — to commit your changes');
+              process.exit(0);
+            }
+          }
+        }
 
         // Read remote config
         const remotesPath = path.join(logitDir, 'remotes');
@@ -30,8 +67,6 @@ export function registerPull(program) {
         }
 
         const serverUrl = typeof remoteEntry === 'string' ? remoteEntry : remoteEntry.url;
-
-        const headers = {};
 
         info(`Pulling from ${serverUrl}...`);
 
@@ -47,18 +82,16 @@ export function registerPull(program) {
         if (toFetch.length > 0) {
           info(`Fetching ${toFetch.length} object(s)...`);
 
-          // Try packfile endpoint first
           const hashList = toFetch.join(',');
-          const packRes = await fetch(`${serverUrl}/packfile?hashes=${hashList}`, { headers });
+          const packRes = await fetch(`${serverUrl}/packfile?hashes=${hashList}`);
 
           if (packRes.ok && packRes.headers.get('content-type') === 'application/octet-stream') {
             const packBuffer = Buffer.from(await packRes.arrayBuffer());
             const stored = await unpackPackfile(logitDir, packBuffer);
             info(`Unpacked ${stored} object(s) from packfile.`);
           } else {
-            // Fallback: object-by-object
             for (const hash of toFetch) {
-              const objRes = await fetch(`${serverUrl}/objects/${hash}`, { headers });
+              const objRes = await fetch(`${serverUrl}/objects/${hash}`);
               if (objRes.ok) {
                 const data = Buffer.from(await objRes.arrayBuffer());
                 const objDir = path.join(logitDir, 'objects', hash.substring(0, 2));
@@ -71,7 +104,7 @@ export function registerPull(program) {
         }
 
         // Fetch remote refs
-        const refsRes = await fetch(`${serverUrl}/refs`, { headers });
+        const refsRes = await fetch(`${serverUrl}/refs`);
         const remoteRefs = await refsRes.json();
 
         const currentBranch = await getCurrentBranch(logitDir);
@@ -80,7 +113,6 @@ export function registerPull(program) {
         const localHeadHash = await resolveHead(logitDir);
 
         if (remoteHeadHash && remoteHeadHash !== localHeadHash) {
-          // Update local refs
           for (const [refName, hash] of Object.entries(remoteRefs)) {
             const refPath = path.join(logitDir, refName);
             const refDir = path.dirname(refPath);
@@ -88,7 +120,6 @@ export function registerPull(program) {
             await fs.writeFile(refPath, hash + '\n');
           }
 
-          // Checkout updated HEAD
           const commit = await readCommit(logitDir, remoteHeadHash);
           const treeEntries = await readTree(logitDir, commit.tree);
           for (const entry of treeEntries) {

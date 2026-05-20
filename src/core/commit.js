@@ -8,7 +8,7 @@ import { runHook } from './hooks.js';
 /**
  * Create a new commit from the current staging index.
  */
-export async function createCommit(logitDir, message) {
+export async function createCommit(logitDir, message, authorOverride = null) {
   const index = await getIndex(logitDir);
 
   if (Object.keys(index.entries).length === 0) {
@@ -31,7 +31,7 @@ export async function createCommit(logitDir, message) {
   const commitData = {
     tree: treeHash,
     parent: parentHash,
-    author: `${config.user.name} <${config.user.email}>`,
+    author: authorOverride || `${config.user.name} <${config.user.email}>`,  // --author flag or config
     timestamp: Date.now(),
     message: message
   };

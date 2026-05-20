@@ -2,16 +2,32 @@ import path from 'path';
 import fs from 'fs/promises';
 import { getLogitDir } from '../core/repository.js';
 import { listAllObjects } from '../core/objects.js';
-import { getAllRefs } from '../core/refs.js';
+import { resolveHead, getAllRefs, getCurrentBranch } from '../core/refs.js';
+import { getCommitLog } from '../core/commit.js';
 import { createPackfile } from '../core/packfile.js';
 import { runHook } from '../core/hooks.js';
 import { success, info, error } from '../utils/display.js';
+import chalk from 'chalk';
+
+/**
+ * Check if localHash is a descendant of remoteHash.
+ * Returns true if the push is a fast-forward (safe).
+ */
+async function isFastForward(logitDir, localHash, remoteHash) {
+  if (!remoteHash) return true; // Remote branch doesn't exist yet — always safe
+  if (localHash === remoteHash) return true; // Same commit
+
+  // Walk local history; if we find remoteHash, it's an ancestor → fast-forward
+  const history = await getCommitLog(logitDir, localHash, 1000);
+  return history.some((c) => c.hash === remoteHash);
+}
 
 export function registerPush(program) {
   program
     .command('push')
     .description('Push commits to a remote server')
     .option('-r, --remote <name>', 'Remote name', 'origin')
+    .option('-f, --force', 'Force push, skipping fast-forward check (dangerous)')
     .action(async (options) => {
       try {
         const logitDir = await getLogitDir();
@@ -29,16 +45,54 @@ export function registerPush(program) {
           throw new Error(`Remote '${options.remote}' not found. Use 'logit remote add <name> <url>'.`);
         }
 
-        // Support both plain URL string and { url } object
         const serverUrl = typeof remoteEntry === 'string' ? remoteEntry : remoteEntry.url;
+        const headers   = { 'Content-Type': 'application/json' };
 
-        const headers = { 'Content-Type': 'application/json' };
+        // ── Non-fast-forward protection ───────────────────────────────────
+        if (!options.force) {
+          const currentBranch = await getCurrentBranch(logitDir);
+          const localHash     = await resolveHead(logitDir);
+
+          // Fetch the remote's current HEAD for this branch
+          let remoteHash = null;
+          try {
+            const refsRes = await fetch(`${serverUrl}/refs`);
+            if (refsRes.ok) {
+              const remoteRefs = await refsRes.json();
+              remoteHash = currentBranch
+                ? remoteRefs[`refs/heads/${currentBranch}`]
+                : null;
+            }
+          } catch {
+            // If we can't fetch refs, let the push proceed (server will validate)
+          }
+
+          if (remoteHash && !(await isFastForward(logitDir, localHash, remoteHash))) {
+            console.log('');
+            console.log(chalk.red('  ✗ Push rejected: non-fast-forward'));
+            console.log('');
+            console.log(
+              chalk.gray('  The remote has commits that your local branch does not.')
+            );
+            console.log(
+              chalk.gray('  This means someone else pushed while you were working.')
+            );
+            console.log('');
+            console.log('  To fix this, pull first:');
+            console.log(chalk.cyan('    logit pull'));
+            console.log('');
+            console.log('  Or force-push (WARNING: this will overwrite remote history):');
+            console.log(chalk.yellow('    logit push --force'));
+            console.log('');
+            process.exit(1);
+          }
+        }
 
         info(`Pushing to ${serverUrl}...`);
 
         // Get local and remote object lists
-        const localObjects = await listAllObjects(logitDir);
-        const remoteObjRes = await fetch(`${serverUrl}/objects/list`);
+        const localObjects  = await listAllObjects(logitDir);
+        const remoteObjRes  = await fetch(`${serverUrl}/objects/list`);
         if (!remoteObjRes.ok) throw new Error(`Cannot connect to ${serverUrl}`);
         const remoteObjects = new Set(await remoteObjRes.json());
 
@@ -51,18 +105,17 @@ export function registerPush(program) {
 
         info(`Pushing ${toPush.length} object(s) as packfile...`);
 
-        // Bundle into a single packfile
         const packBuffer = await createPackfile(logitDir, toPush);
 
         const packRes = await fetch(`${serverUrl}/packfile`, {
-          method: 'POST',
+          method:  'POST',
           headers: { ...headers, 'Content-Type': 'application/octet-stream' },
-          body: packBuffer,
-          duplex: 'half'
+          body:    packBuffer,
+          duplex:  'half'
         });
 
         if (!packRes.ok) {
-          // Fallback: try legacy JSON endpoint
+          // Fallback: object-by-object
           info('Packfile endpoint not available, falling back to object-by-object...');
           const objects = [];
           for (const hash of toPush) {
@@ -71,9 +124,7 @@ export function registerPush(program) {
             objects.push({ hash, data: data.toString('base64') });
           }
           const fallbackRes = await fetch(`${serverUrl}/objects`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({ objects })
+            method: 'POST', headers, body: JSON.stringify({ objects })
           });
           if (!fallbackRes.ok) {
             const errBody = await fallbackRes.json().catch(() => ({}));
@@ -87,9 +138,7 @@ export function registerPush(program) {
         // Update remote refs
         const localRefs = await getAllRefs(logitDir);
         const refsRes = await fetch(`${serverUrl}/update-refs`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ refs: localRefs })
+          method: 'POST', headers, body: JSON.stringify({ refs: localRefs })
         });
 
         if (!refsRes.ok) {

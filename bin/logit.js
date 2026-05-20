@@ -17,8 +17,11 @@ import { registerPush } from '../src/commands/push.js';
 import { registerPull } from '../src/commands/pull.js';
 import { registerRemote } from '../src/commands/remote.js';
 import { registerDiscover } from '../src/commands/discover.js';
+import { registerSync } from '../src/commands/sync.js';
 import { registerStash } from '../src/commands/stash.js';
 import { registerTag } from '../src/commands/tag.js';
+import { registerConfig } from '../src/commands/config.js';
+import { registerReset } from '../src/commands/reset.js';
 
 const program = new Command();
 
@@ -42,6 +45,8 @@ registerMerge(program);
 // Extended VCS
 registerStash(program);
 registerTag(program);
+registerConfig(program);
+registerReset(program);
 
 // Network
 registerServe(program);
@@ -50,5 +55,6 @@ registerPush(program);
 registerPull(program);
 registerRemote(program);
 registerDiscover(program);
+registerSync(program);
 
 program.parse(process.argv);
