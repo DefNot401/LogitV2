@@ -12,6 +12,20 @@ import { ensureDir } from '../utils/fs.js';
  * Supports fast-forward merge and three-way merge with conflict detection.
  */
 export async function merge(logitDir, branchName) {
+  const targetHash = await getBranchCommit(logitDir, branchName);
+
+  if (!targetHash) {
+    throw new Error(`Branch '${branchName}' not found.`);
+  }
+
+  return mergeToCommitHash(logitDir, targetHash, branchName);
+}
+
+/**
+ * Merge a commit hash directly into the current branch.
+ * Supports fast-forward merge and three-way merge with conflict detection.
+ */
+export async function mergeToCommitHash(logitDir, targetHash, targetLabel) {
   const root = await getRepoRoot();
   const currentBranch = await getCurrentBranch(logitDir);
 
@@ -19,16 +33,7 @@ export async function merge(logitDir, branchName) {
     throw new Error('Cannot merge in detached HEAD state. Switch to a branch first.');
   }
 
-  if (currentBranch === branchName) {
-    throw new Error(`Cannot merge branch '${branchName}' into itself.`);
-  }
-
   const currentHash = await resolveHead(logitDir);
-  const targetHash = await getBranchCommit(logitDir, branchName);
-
-  if (!targetHash) {
-    throw new Error(`Branch '${branchName}' not found.`);
-  }
 
   if (currentHash === targetHash) {
     return { type: 'up-to-date', message: 'Already up to date.' };
@@ -122,7 +127,7 @@ export async function merge(logitDir, branchName) {
         `=======\n` +
         targetContent +
         (targetContent.endsWith('\n') ? '' : '\n') +
-        `>>>>>>> ${branchName}\n`;
+        `>>>>>>> ${targetLabel}\n`;
 
       const conflictHash = await writeObject(logitDir, conflictContent, 'blob');
       mergedEntries[file] = conflictHash;
@@ -147,7 +152,7 @@ export async function merge(logitDir, branchName) {
 
   return {
     type: 'merge',
-    message: `Merged branch '${branchName}' into '${currentBranch}'.`,
+    message: `Merged ${targetLabel} into '${currentBranch}'.`,
     mergedEntries
   };
 }
@@ -155,7 +160,7 @@ export async function merge(logitDir, branchName) {
 /**
  * Check if 'ancestor' is an ancestor of 'descendant'.
  */
-async function isAncestor(logitDir, ancestor, descendant) {
+export async function isAncestor(logitDir, ancestor, descendant) {
   if (!ancestor) return true; // null is ancestor of everything (first commit)
   const commits = await getCommitLog(logitDir, descendant, 1000);
   return commits.some(c => c.hash === ancestor);

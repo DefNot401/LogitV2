@@ -1,0 +1,23 @@
+# ── Logit VCS internals ─────────────────────────────────
+# Prevent Git from tracking Logit's own repository data
+.logit/
+
+# Logit ignore rules file (project-specific, optional to track)
+.logitignore
+
+# ── Node.js ─────────────────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ── OS / Editor artifacts ────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# ── Build / Misc ─────────────────────────────────────────
+dist/
