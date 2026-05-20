@@ -352,10 +352,34 @@ function buildWebUI(repoName) {
     }
 
     function copyHash(hash) {
-      navigator.clipboard?.writeText(hash);
       const toast = document.getElementById('toast');
-      toast.classList.add('show');
-      setTimeout(() => toast.classList.remove('show'), 2000);
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(hash).then(() => {
+          toast.classList.add('show');
+          setTimeout(() => toast.classList.remove('show'), 2000);
+        }).catch(() => fallbackCopy(hash, toast));
+      } else {
+        fallbackCopy(hash, toast);
+      }
+    }
+    function fallbackCopy(text, toast) {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      ta.style.top = '0';
+      ta.style.left = '0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      try {
+        document.execCommand('copy');
+        toast.classList.add('show');
+        setTimeout(() => toast.classList.remove('show'), 2000);
+      } catch (e) {
+        console.error('Copy failed:', e);
+      }
+      document.body.removeChild(ta);
     }
 
     async function toggleCommitDiff(hash) {
@@ -668,14 +692,14 @@ export function createServer(logitDir, repoRoot) {
           const refPath = path.join(logitDir, ref);
           try {
             head = (await fs.readFile(refPath, 'utf-8')).trim();
-          } catch(e) {}
+          } catch (e) { }
         } else {
           head = ref; // assume it's a hash
         }
       } else {
         head = await resolveHead(logitDir);
       }
-      
+
       if (!head) return res.json([]);
       const commits = await getCommitLog(logitDir, head, 100);
       res.json(commits);
@@ -712,7 +736,7 @@ export function createServer(logitDir, repoRoot) {
         if (ref.startsWith('refs/')) {
           try {
             commitHash = (await fs.readFile(path.join(logitDir, ref), 'utf-8')).trim();
-          } catch(e) {}
+          } catch (e) { }
         } else {
           commitHash = ref;
         }
@@ -742,7 +766,7 @@ export function createServer(logitDir, repoRoot) {
         if (ref.startsWith('refs/')) {
           try {
             commitHash = (await fs.readFile(path.join(logitDir, ref), 'utf-8')).trim();
-          } catch(e) {}
+          } catch (e) { }
         } else {
           commitHash = ref;
         }
@@ -779,51 +803,51 @@ export function createServer(logitDir, repoRoot) {
     try {
       const { hash } = req.params;
       const commit = await readCommit(logitDir, hash);
-      
+
       let parentTreeEntries = [];
       if (commit.parent) {
         const parentCommit = await readCommit(logitDir, commit.parent);
         parentTreeEntries = await readTree(logitDir, parentCommit.tree);
       }
-      
+
       const currentTreeEntries = await readTree(logitDir, commit.tree);
-      
+
       // Build maps
       const parentFiles = {};
       for (const e of parentTreeEntries) parentFiles[e.name] = e.hash;
-      
+
       const currentFiles = {};
       for (const e of currentTreeEntries) currentFiles[e.name] = e.hash;
-      
+
       const allFiles = [...new Set([...Object.keys(parentFiles), ...Object.keys(currentFiles)])];
       const diffs = [];
-      
+
       for (const file of allFiles) {
         const oldHash = parentFiles[file];
         const newHash = currentFiles[file];
-        
+
         if (oldHash === newHash) continue; // no change
-        
+
         let oldContent = '';
         if (oldHash) {
           try {
             const obj = await readObject(logitDir, oldHash);
             oldContent = obj.content.toString('utf-8');
-          } catch(e) {}
+          } catch (e) { }
         }
-        
+
         let newContent = '';
         if (newHash) {
           try {
             const obj = await readObject(logitDir, newHash);
             newContent = obj.content.toString('utf-8');
-          } catch(e) {}
+          } catch (e) { }
         }
-        
-        const patch = Diff.createPatch(file, oldContent, newContent, commit.parent ? commit.parent.substring(0,7) : 'empty', hash.substring(0,7));
+
+        const patch = Diff.createPatch(file, oldContent, newContent, commit.parent ? commit.parent.substring(0, 7) : 'empty', hash.substring(0, 7));
         diffs.push({ file, patch });
       }
-      
+
       res.json(diffs);
     } catch (err) {
       res.status(500).json({ error: err.message });
