@@ -7,26 +7,6 @@ import { readTree } from '../core/tree.js';
 import { unpackPackfile } from '../core/packfile.js';
 import { ensureDir } from '../utils/fs.js';
 import { success, info, error } from '../utils/display.js';
-import chalk from 'chalk';
-
-// ─── Simple inline progress bar ──────────────────────────────────────────────
-
-function renderProgress(current, total, label = '') {
-  const width   = 30;
-  const pct     = total === 0 ? 100 : Math.floor((current / total) * 100);
-  const filled  = Math.floor((current / Math.max(total, 1)) * width);
-  const empty   = width - filled;
-  const bar     = chalk.green('█').repeat(filled) + chalk.gray('░').repeat(empty);
-  process.stdout.write(
-    `\r  ${bar} ${chalk.bold(`${pct}%`)}  ${chalk.gray(`${current}/${total}`)}  ${label}  `
-  );
-}
-
-function clearLine() {
-  process.stdout.write('\r' + ' '.repeat(60) + '\r');
-}
-
-// ─── Command ──────────────────────────────────────────────────────────────────
 
 export function registerClone(program) {
   program
@@ -34,64 +14,48 @@ export function registerClone(program) {
     .description('Clone a repository from a remote server')
     .argument('<url>', 'Server URL (e.g., http://192.168.1.10:5000)')
     .argument('[directory]', 'Directory to clone into')
-    .action(async (url, directory) => {
+    .option('--token <token>', 'Auth token for private repositories')
+    .action(async (url, directory, options) => {
       try {
         const serverUrl = url.endsWith('/') ? url.slice(0, -1) : url;
 
-        info(`Cloning from ${chalk.cyan(serverUrl)}...`);
+        const headers = {};
+        const token = options.token || process.env.LOGIT_TOKEN;
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+
+        info(`Cloning from ${serverUrl}...`);
 
         const infoRes = await fetch(`${serverUrl}/info`);
         if (!infoRes.ok) throw new Error(`Cannot connect to ${serverUrl}`);
         const repoInfo = await infoRes.json();
 
-        const targetDir  = directory || repoInfo.name || 'logit-repo';
+        const targetDir = directory || repoInfo.name || 'logit-repo';
         const targetPath = path.resolve(targetDir);
 
         await fs.mkdir(targetPath, { recursive: true });
         const logitDir = await initRepository(targetPath);
-        info(`Initialized repository in ${chalk.white(targetPath)}`);
+        info(`Initialized repository in ${targetPath}`);
 
-        // ── Fetch object list ─────────────────────────────────────────────
-        const objectsRes   = await fetch(`${serverUrl}/objects/list`);
+        // Fetch all objects via packfile
+        info('Fetching objects...');
+        const objectsRes = await fetch(`${serverUrl}/objects/list`);
         const objectHashes = await objectsRes.json();
-        const totalObjects = objectHashes.length;
 
-        if (totalObjects > 0) {
-          console.log('');
-          info(`Fetching ${totalObjects} object(s)...`);
+        if (objectHashes.length > 0) {
+          const hashList = objectHashes.join(',');
+          const packRes = await fetch(`${serverUrl}/packfile?hashes=${hashList}`, { headers });
 
-          const chunkSize = 100;
-          let storedCount = 0;
-          let useFallback = false;
-
-          for (let i = 0; i < totalObjects; i += chunkSize) {
-            const chunk = objectHashes.slice(i, i + chunkSize);
-            const hashList = chunk.join(',');
-            try {
-              renderProgress(i, totalObjects, 'downloading packfile');
-              const packRes = await fetch(`${serverUrl}/packfile?hashes=${hashList}`);
-              if (packRes.ok && packRes.headers.get('content-type') === 'application/octet-stream') {
-                const packBuffer = Buffer.from(await packRes.arrayBuffer());
-                const stored = await unpackPackfile(logitDir, packBuffer);
-                storedCount += stored;
-              } else {
-                useFallback = true;
-                break;
-              }
-            } catch (err) {
-              useFallback = true;
-              break;
-            }
-          }
-
-          if (useFallback) {
-            // Fallback: object-by-object with progress bar
+          if (packRes.ok && packRes.headers.get('content-type') === 'application/octet-stream') {
+            const packBuffer = Buffer.from(await packRes.arrayBuffer());
+            const stored = await unpackPackfile(logitDir, packBuffer);
+            info(`Unpacked ${stored} object(s) from packfile.`);
+          } else {
+            // Fallback: object-by-object
             let fetched = 0;
             for (const hash of objectHashes) {
-              renderProgress(fetched, totalObjects, hash.substring(0, 7));
-              const objRes = await fetch(`${serverUrl}/objects/${hash}`);
+              const objRes = await fetch(`${serverUrl}/objects/${hash}`, { headers });
               if (objRes.ok) {
-                const data   = Buffer.from(await objRes.arrayBuffer());
+                const data = Buffer.from(await objRes.arrayBuffer());
                 const objDir = path.join(logitDir, 'objects', hash.substring(0, 2));
                 const objPath = path.join(objDir, hash.substring(2));
                 await ensureDir(objDir);
@@ -99,54 +63,41 @@ export function registerClone(program) {
                 fetched++;
               }
             }
-            clearLine();
             info(`Fetched ${fetched} object(s).`);
-          } else {
-            renderProgress(totalObjects, totalObjects, 'unpacking...');
-            clearLine();
-            success(`Unpacked ${storedCount} object(s) from packfile.`);
           }
-          console.log('');
         }
 
-        // ── Fetch refs ────────────────────────────────────────────────────
+        // Fetch refs
         info('Updating references...');
         const refsRes = await fetch(`${serverUrl}/refs`);
-        const refs    = await refsRes.json();
+        const refs = await refsRes.json();
 
         for (const [refName, hash] of Object.entries(refs)) {
           const refPath = path.join(logitDir, refName);
-          await fs.mkdir(path.dirname(refPath), { recursive: true });
+          const refDir = path.dirname(refPath);
+          await fs.mkdir(refDir, { recursive: true });
           await fs.writeFile(refPath, hash + '\n');
         }
 
-        // ── Checkout HEAD ─────────────────────────────────────────────────
+        // Checkout HEAD
         if (repoInfo.head) {
-          info('Checking out files...');
-          const commit      = await readCommit(logitDir, repoInfo.head);
+          const commit = await readCommit(logitDir, repoInfo.head);
           const treeEntries = await readTree(logitDir, commit.tree);
-          let written = 0;
           for (const entry of treeEntries) {
-            renderProgress(written, treeEntries.length, entry.name);
-            const obj      = await readObject(logitDir, entry.hash);
+            const obj = await readObject(logitDir, entry.hash);
             const filePath = path.join(targetPath, entry.name);
             await ensureDir(path.dirname(filePath));
             await fs.writeFile(filePath, obj.content);
-            written++;
           }
-          clearLine();
         }
 
-        // ── Save remote config ────────────────────────────────────────────
-        await fs.writeFile(
-          path.join(logitDir, 'remotes'),
-          JSON.stringify({ origin: serverUrl }, null, 2)
-        );
+        // Save remote config (with token if provided)
+        const remoteEntry = token ? { url: serverUrl, token } : serverUrl;
+        const remotes = { origin: remoteEntry };
+        await fs.writeFile(path.join(logitDir, 'remotes'), JSON.stringify(remotes, null, 2));
 
-        console.log('');
-        success(`Cloned '${chalk.cyan(repoInfo.name || targetDir)}' into '${targetDir}'`);
-        info(`${totalObjects} objects, ${Object.keys(refs).length} refs`);
-        info(`Remote 'origin' set to ${chalk.cyan(serverUrl)}`);
+        success(`Cloned repository into '${targetDir}'`);
+        info(`${objectHashes.length} objects, ${Object.keys(refs).length} refs`);
       } catch (err) {
         error(err.message);
         process.exit(1);

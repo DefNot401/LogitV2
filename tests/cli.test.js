@@ -151,6 +151,34 @@ describe('CLI Integration', () => {
     assert.strictEqual(featureExists, false, 'feature.txt should not exist on main branch');
   });
 
+  it('branching workflow: untracked files should not be deleted during switch/checkout', async () => {
+    await run(['init']);
+    await fs.writeFile(path.join(testDir, 'main.txt'), 'main content');
+    await run(['add', 'main.txt']);
+    await run(['commit', '-m', 'Main commit']);
+
+    await run(['branch', 'feature']);
+    await run(['switch', 'feature']);
+
+    // Create untracked file
+    const untrackedPath = path.join(testDir, 'untracked.txt');
+    await fs.writeFile(untrackedPath, 'some untracked data');
+
+    // Switch back to main
+    await run(['switch', 'main']);
+
+    // The untracked file should still exist!
+    let untrackedExists = await fs.access(untrackedPath).then(() => true).catch(() => false);
+    assert.strictEqual(untrackedExists, true, 'Untracked file should not be deleted when switching to main');
+
+    // Switch back to feature
+    await run(['switch', 'feature']);
+
+    // The untracked file should still exist!
+    untrackedExists = await fs.access(untrackedPath).then(() => true).catch(() => false);
+    assert.strictEqual(untrackedExists, true, 'Untracked file should not be deleted when switching to feature');
+  });
+
   it('checkout by commit hash', async () => {
     await run(['init']);
     await fs.writeFile(path.join(testDir, 'data.txt'), 'version 1');

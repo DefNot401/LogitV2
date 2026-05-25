@@ -3,8 +3,7 @@ import path from 'path';
 import fs from 'fs/promises';
 import { getLogitDir, getRepoRoot } from '../core/repository.js';
 import { readObject, objectExists, listAllObjects, writeObject } from '../core/objects.js';
-import { getAllRefs, getBranchCommit, resolveHead, getCurrentBranch } from '../core/refs.js';
-import { checkout } from '../core/checkout.js';
+import { getAllRefs, getBranchCommit, resolveHead } from '../core/refs.js';
 import { getCommitLog, readCommit } from '../core/commit.js';
 import { readTree } from '../core/tree.js';
 import { createPackfile, unpackPackfile } from '../core/packfile.js';
@@ -13,7 +12,28 @@ import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const Diff = require('diff');
 
+// ---------------------------------------------------------------------------
+// Auth middleware factory
+// ---------------------------------------------------------------------------
+function makeAuthMiddleware(token, readOnly) {
+  return function authMiddleware(req, res, next) {
+    const isWriteRoute = req.method === 'POST' || req.method === 'PUT' || req.method === 'DELETE';
 
+    if (readOnly && isWriteRoute) {
+      return res.status(403).json({ error: 'Server is in read-only mode. Writes are not allowed.' });
+    }
+
+    if (token && isWriteRoute) {
+      const authHeader = req.headers['authorization'] || '';
+      const provided = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+      if (provided !== token) {
+        return res.status(401).json({ error: 'Unauthorized: invalid or missing token.' });
+      }
+    }
+
+    next();
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Web Explorer UI (self-contained HTML/CSS/JS)
@@ -83,6 +103,8 @@ function buildWebUI(repoName) {
     .copy-btn:hover { background: var(--bg); color: var(--text); }
     .copy-btn:active { transform: scale(0.85); color: var(--accent2); }
     .copy-btn svg { width: 12px; height: 12px; }
+    .delete-btn:hover { background: rgba(239,68,68,0.1); color: #ef4444; }
+    .delete-btn:active { color: #dc2626; }
     .commit-author { color: var(--muted); font-size: 12px; }
     .commit-date { color: var(--muted); font-size: 12px; }
     .tag-badge { background: rgba(240,136,62,.15); border: 1px solid var(--orange); color: var(--orange); border-radius: 4px; padding: 1px 6px; font-size: 11px; }
@@ -339,6 +361,9 @@ function buildWebUI(repoName) {
                   <button class="copy-btn" onclick="copyHash('\${c.hash}')" title="Copy full hash">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                   </button>
+                  <button class="copy-btn delete-btn" onclick="deleteCommit('\${c.hash}')" title="Delete commit (rewrites history)">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                  </button>
                 </div>
                 <span class="commit-author">\${escHtml(c.author)}</span>
                 <span class="commit-date">\${timeAgo(c.timestamp)}</span>
@@ -353,34 +378,30 @@ function buildWebUI(repoName) {
     }
 
     function copyHash(hash) {
+      navigator.clipboard?.writeText(hash);
       const toast = document.getElementById('toast');
-      if (navigator.clipboard && window.isSecureContext) {
-        navigator.clipboard.writeText(hash).then(() => {
-          toast.classList.add('show');
-          setTimeout(() => toast.classList.remove('show'), 2000);
-        }).catch(() => fallbackCopy(hash, toast));
-      } else {
-        fallbackCopy(hash, toast);
-      }
+      toast.textContent = 'Copied!';
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 2000);
     }
-    function fallbackCopy(text, toast) {
-      const ta = document.createElement('textarea');
-      ta.value = text;
-      ta.style.position = 'fixed';
-      ta.style.opacity = '0';
-      ta.style.top = '0';
-      ta.style.left = '0';
-      document.body.appendChild(ta);
-      ta.focus();
-      ta.select();
+
+    async function deleteCommit(hash) {
+      if (!confirm(\`Are you sure you want to delete commit \${hash.substring(0,7)}?\\n\\nWARNING: This will rewrite all subsequent commits and change their hashes. If this has been pushed, others may face conflicts.\`)) return;
+      
       try {
-        document.execCommand('copy');
+        const res = await fetch(API + '/ui/commit/' + encodeURIComponent(hash), { method: 'DELETE' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to delete');
+        
+        const toast = document.getElementById('toast');
+        toast.textContent = 'Commit deleted. History rewritten.';
         toast.classList.add('show');
-        setTimeout(() => toast.classList.remove('show'), 2000);
-      } catch (e) {
-        console.error('Copy failed:', e);
+        setTimeout(() => toast.classList.remove('show'), 3000);
+        
+        loadInfo(); // Refresh UI
+      } catch (err) {
+        alert('Error: ' + err.message);
       }
-      document.body.removeChild(ta);
     }
 
     async function toggleCommitDiff(hash) {
@@ -541,8 +562,10 @@ function buildWebUI(repoName) {
  * Create and return an Express server for sharing the repository over LAN.
  * @param {string} logitDir
  * @param {string} repoRoot
+ * @param {{ token?: string, readOnly?: boolean }} opts
  */
-export function createServer(logitDir, repoRoot) {
+export function createServer(logitDir, repoRoot, opts = {}) {
+  const { token = null, readOnly = false } = opts;
   const app = express();
 
   // Raw body for packfile uploads (must come before json middleware)
@@ -558,6 +581,9 @@ export function createServer(logitDir, repoRoot) {
 
   app.use(express.json({ limit: '50mb' }));
 
+  // Auth middleware on all routes
+  app.use(makeAuthMiddleware(token, readOnly));
+
   // ── Web UI ──────────────────────────────────────────────────────────────
   app.get('/', (req, res) => {
     const repoName = path.basename(repoRoot);
@@ -565,7 +591,10 @@ export function createServer(logitDir, repoRoot) {
     res.send(buildWebUI(repoName));
   });
 
-
+  // ── Auth info (unauthenticated) ─────────────────────────────────────────
+  app.get('/auth-info', (req, res) => {
+    res.json({ requiresAuth: !!token, readOnly });
+  });
 
   // ── Repository info ──────────────────────────────────────────────────────
   app.get('/info', async (req, res) => {
@@ -677,30 +706,19 @@ export function createServer(logitDir, repoRoot) {
         await fs.mkdir(path.dirname(refPath), { recursive: true });
         await fs.writeFile(refPath, hash + '\n');
       }
-
-      // Auto-checkout: restore working directory to the current branch's new HEAD
-      // This makes `logit serve` behave as a live (non-bare) repo — files on the
-      // host PC will reflect what was pushed without needing a manual checkout.
-      try {
-        const currentBranch = await getCurrentBranch(logitDir);
-        if (currentBranch) {
-          await checkout(logitDir, currentBranch);
-          console.log(`[logit serve] Auto-checked out branch '${currentBranch}' after push.`);
-        } else {
-          // Detached HEAD — checkout the new HEAD hash directly
-          const { resolveHead: rh } = await import('../core/refs.js');
-          const headHash = await resolveHead(logitDir);
-          if (headHash) {
-            await checkout(logitDir, headHash);
-            console.log(`[logit serve] Auto-checked out ${headHash.substring(0, 7)} after push.`);
-          }
-        }
-      } catch (checkoutErr) {
-        // Don't fail the push if checkout has a problem — just log it
-        console.warn(`[logit serve] Auto-checkout failed: ${checkoutErr.message}`);
-      }
-
       res.json({ message: 'Refs updated.' });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── UI: delete commit ──────────────────────────────────────────────────────
+  app.delete('/ui/commit/:hash', async (req, res) => {
+    if (readOnly) return res.status(403).json({ error: 'Repository is read-only' });
+    try {
+      const { dropCommit } = await import('../core/commit.js');
+      await dropCommit(logitDir, req.params.hash);
+      res.json({ message: 'Commit dropped successfully' });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -716,14 +734,14 @@ export function createServer(logitDir, repoRoot) {
           const refPath = path.join(logitDir, ref);
           try {
             head = (await fs.readFile(refPath, 'utf-8')).trim();
-          } catch (e) { }
+          } catch(e) {}
         } else {
           head = ref; // assume it's a hash
         }
       } else {
         head = await resolveHead(logitDir);
       }
-
+      
       if (!head) return res.json([]);
       const commits = await getCommitLog(logitDir, head, 100);
       res.json(commits);
@@ -760,7 +778,7 @@ export function createServer(logitDir, repoRoot) {
         if (ref.startsWith('refs/')) {
           try {
             commitHash = (await fs.readFile(path.join(logitDir, ref), 'utf-8')).trim();
-          } catch (e) { }
+          } catch(e) {}
         } else {
           commitHash = ref;
         }
@@ -790,7 +808,7 @@ export function createServer(logitDir, repoRoot) {
         if (ref.startsWith('refs/')) {
           try {
             commitHash = (await fs.readFile(path.join(logitDir, ref), 'utf-8')).trim();
-          } catch (e) { }
+          } catch(e) {}
         } else {
           commitHash = ref;
         }
@@ -827,51 +845,51 @@ export function createServer(logitDir, repoRoot) {
     try {
       const { hash } = req.params;
       const commit = await readCommit(logitDir, hash);
-
+      
       let parentTreeEntries = [];
       if (commit.parent) {
         const parentCommit = await readCommit(logitDir, commit.parent);
         parentTreeEntries = await readTree(logitDir, parentCommit.tree);
       }
-
+      
       const currentTreeEntries = await readTree(logitDir, commit.tree);
-
+      
       // Build maps
       const parentFiles = {};
       for (const e of parentTreeEntries) parentFiles[e.name] = e.hash;
-
+      
       const currentFiles = {};
       for (const e of currentTreeEntries) currentFiles[e.name] = e.hash;
-
+      
       const allFiles = [...new Set([...Object.keys(parentFiles), ...Object.keys(currentFiles)])];
       const diffs = [];
-
+      
       for (const file of allFiles) {
         const oldHash = parentFiles[file];
         const newHash = currentFiles[file];
-
+        
         if (oldHash === newHash) continue; // no change
-
+        
         let oldContent = '';
         if (oldHash) {
           try {
             const obj = await readObject(logitDir, oldHash);
             oldContent = obj.content.toString('utf-8');
-          } catch (e) { }
+          } catch(e) {}
         }
-
+        
         let newContent = '';
         if (newHash) {
           try {
             const obj = await readObject(logitDir, newHash);
             newContent = obj.content.toString('utf-8');
-          } catch (e) { }
+          } catch(e) {}
         }
-
-        const patch = Diff.createPatch(file, oldContent, newContent, commit.parent ? commit.parent.substring(0, 7) : 'empty', hash.substring(0, 7));
+        
+        const patch = Diff.createPatch(file, oldContent, newContent, commit.parent ? commit.parent.substring(0,7) : 'empty', hash.substring(0,7));
         diffs.push({ file, patch });
       }
-
+      
       res.json(diffs);
     } catch (err) {
       res.status(500).json({ error: err.message });

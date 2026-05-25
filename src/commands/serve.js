@@ -10,6 +10,8 @@ export function registerServe(program) {
     .command('serve')
     .description('Start a server to share this repository on the local network')
     .option('-p, --port <port>', 'Port to listen on', '5000')
+    .option('--token <token>', 'Require this token for write operations (env: LOGIT_TOKEN)')
+    .option('--read-only', 'Reject all push/write operations')
     .option('--no-mdns', 'Disable mDNS/Bonjour advertisement')
     .action(async (options) => {
       try {
@@ -17,7 +19,11 @@ export function registerServe(program) {
         const repoRoot = await getRepoRoot();
         const port = parseInt(options.port, 10);
 
-        const app = createServer(logitDir, repoRoot);
+        // Resolve token — CLI flag takes priority, then environment variable
+        const token = options.token || process.env.LOGIT_TOKEN || null;
+        const readOnly = !!options.readOnly;
+
+        const app = createServer(logitDir, repoRoot, { token, readOnly });
 
         app.listen(port, '0.0.0.0', async () => {
           const repoName = repoRoot.split(/[\\/]/).pop();
@@ -29,7 +35,14 @@ export function registerServe(program) {
           );
           console.log(chalk.gray('  ─────────────────────────────────────'));
 
-          console.log(`  ${chalk.gray('○')}  Mode: ${chalk.white('open')} — anyone on the network can clone & push`);
+          // Auth status
+          if (readOnly) {
+            console.log(`  ${chalk.yellow('⚠')}  Mode: ${chalk.yellow('read-only')} (push/write rejected)`);
+          } else if (token) {
+            console.log(`  ${chalk.green('🔒')} Mode: ${chalk.green('authenticated')} (token required for writes)`);
+          } else {
+            console.log(`  ${chalk.gray('○')}  Mode: ${chalk.white('open')} (no auth — anyone can push)`);
+          }
 
           console.log('');
           console.log(`  ${chalk.bold('Web UI')}      ${chalk.cyan(`http://localhost:${port}`)}`);
